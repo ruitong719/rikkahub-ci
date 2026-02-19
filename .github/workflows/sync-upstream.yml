@@ -1,0 +1,65 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天 UTC 0 点 = 北京时间 8:00
+  workflow_dispatch:     # 允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/rikkahub/rikkahub.git
+          git fetch upstream
+      
+      - name: Check if update needed
+        id: check
+        run: |
+          LOCAL=$(git rev-parse master)
+          UPSTREAM=$(git rev-parse upstream/master)
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "sync_needed=false" >> $GITHUB_OUTPUT
+            echo "✅ Already up to date"
+          else
+            echo "sync_needed=true" >> $GITHUB_OUTPUT
+            echo "🔄 New updates available"
+          fi
+      
+      - name: Create backup branch
+        if: steps.check.outputs.sync_needed == 'true'
+        run: |
+          BACKUP_DATE=$(date +%Y%m%d-%H%M%S)
+          git checkout -b backup/$BACKUP_DATE
+          git push origin backup/$BACKUP_DATE
+          echo "📦 Backup created: backup/$BACKUP_DATE"
+      
+      - name: Merge upstream
+        if: steps.check.outputs.sync_needed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout master
+          git merge upstream/master --allow-unrelated-histories --strategy-option=theirs -m "chore: sync from upstream"
+          git push origin master
+      
+      - name: Sync summary
+        if: always()
+        run: |
+          echo "====================================="
+          echo "📊 Sync Summary"
+          echo "====================================="
+          echo "Repository: ${{ github.repository }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Status: ${{ job.status }}"
+          echo "====================================="
