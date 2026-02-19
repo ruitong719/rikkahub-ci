@@ -43,7 +43,7 @@ jobs:
           git checkout -b backup/$BACKUP_DATE
           git push origin backup/$BACKUP_DATE
           echo "📦 Backup created: backup/$BACKUP_DATE"
-      
+
       - name: Merge upstream
         if: steps.check.outputs.sync_needed == 'true'
         run: |
@@ -51,7 +51,19 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout master
           git merge upstream/master --allow-unrelated-histories --strategy-option=theirs -m "chore: sync from upstream"
+          
+          # 🔧 强制创建 commit 以触发构建
+          git commit --allow-empty -m "chore: trigger build - sync $(date +%Y%m%d-%H%M%S)"
+          
           git push origin master
+      # - name: Merge upstream
+      #   if: steps.check.outputs.sync_needed == 'true'
+      #   run: |
+      #     git config user.name "github-actions[bot]"
+      #     git config user.email "github-actions[bot]@users.noreply.github.com"
+      #     git checkout master
+      #     git merge upstream/master --allow-unrelated-histories --strategy-option=theirs -m "chore: sync from upstream"
+      #     git push origin master
       
       - name: Sync summary
         if: always()
