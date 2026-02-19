@@ -3,7 +3,7 @@ name: Sync Upstream
 on:
   schedule:
     - cron: '0 0 * * *'  # 每天 UTC 0 点 = 北京时间 8:00
-  workflow_dispatch:     # 允许手动触发
+  workflow_dispatch:     # 允许手动触发同步检查
 
 jobs:
   sync:
@@ -11,6 +11,10 @@ jobs:
     permissions:
       contents: write
     
+    # 暴露输出变量，供下游 Job 判断
+    outputs:
+      sync_needed: ${{ steps.check.outputs.sync_needed }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,21 +30,25 @@ jobs:
       - name: Check if update needed
         id: check
         run: |
-          LOCAL=$(git rev-parse master)
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          LOCAL=$(git rev-parse $CURRENT_BRANCH)
           UPSTREAM=$(git rev-parse upstream/master)
+          
           if [ "$LOCAL" = "$UPSTREAM" ]; then
             echo "sync_needed=false" >> $GITHUB_OUTPUT
             echo "✅ Already up to date"
           else
             echo "sync_needed=true" >> $GITHUB_OUTPUT
             echo "🔄 New updates available"
+            echo "Local: $LOCAL"
+            echo "Upstream: $UPSTREAM"
           fi
       
       - name: Create backup branch
         if: steps.check.outputs.sync_needed == 'true'
         run: |
           BACKUP_DATE=$(date +%Y%m%d-%H%M%S)
-          git checkout -b backup/$BACKUP_DATE
+          git branch backup/$BACKUP_DATE
           git push origin backup/$BACKUP_DATE
           echo "📦 Backup created: backup/$BACKUP_DATE"
 
@@ -49,12 +57,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
           git checkout master
           git merge upstream/master --allow-unrelated-histories --strategy-option=theirs -m "chore: sync from upstream"
-          
-          # 🔧 强制创建 commit 以触发构建
           git commit --allow-empty -m "chore: trigger build - sync $(date +%Y%m%d-%H%M%S)"
-          
           git push origin master
 
       - name: Sync summary
@@ -64,24 +70,27 @@ jobs:
           echo "📊 Sync Summary"
           echo "====================================="
           echo "Repository: ${{ github.repository }}"
-          echo "Run ID: ${{ github.run_id }}"
+          echo "Sync Needed: ${{ steps.check.outputs.sync_needed }}"
           echo "Status: ${{ job.status }}"
           echo "====================================="
 
   trigger-ci:
     needs: sync
+    # 只有当 sync 任务成功，且检测到有更新时才运行
     if: needs.sync.outputs.sync_needed == 'true' && success()
     runs-on: ubuntu-latest
+    permissions:
+      actions: write  # 赋予触发其他 workflow 的权限
     steps:
-      - name: Trigger Android CI
+      - name: Trigger Android Build
         uses: actions/github-script@v7
         with:
           script: |
-            console.log('🚀 Triggering Android CI workflow...');
+            console.log('🚀 Triggering android-build workflow...');
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'android-ci.yml',
+              workflow_id: 'android-build.yml',  // 目标 CI 文件名
               ref: 'master'
             });
-            console.log('✅ Android CI triggered successfully!');
+            console.log('✅ Android Build triggered successfully!');
