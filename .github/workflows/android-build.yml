@@ -14,7 +14,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 🔥 新增：从 Secret 写入 google-services.json
     - name: Setup google-services.json
       run: |
         echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
@@ -24,23 +23,61 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+        cache: 'gradle'
+
+    # 🔧 缓存 Gradle Wrapper
+    - name: Cache Gradle Wrapper
+      uses: actions/cache@v4
+      with:
+        path: ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+
+    # 🔧 缓存 Gradle 依赖
+    - name: Cache Gradle Dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/jdks
+        key: ${{ runner.os }}-gradle-deps-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-deps-
+
+    # 🔧 缓存 Build Cache
+    - name: Cache Build Cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/build-cache
+          .gradle/build-cache
+        key: ${{ runner.os }}-build-cache-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-build-cache-
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    # 🔧 优化构建参数
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
-    
-    # 🔍 新增：查找所有 APK 文件（调试用）
+      run: |
+        ./gradlew assembleDebug \
+          --no-daemon \
+          --build-cache \
+          --parallel \
+          --max-workers=2
+
+    # 🔍 查找 APK 文件
     - name: Find APK files
       run: |
         echo "=== Searching for APK files ==="
         find . -name "*.apk" -type f
-        echo "=== APK search complete ==="
-    
+
+    # 📦 修复：使用通配符上传 APK
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug-apk
-        path: app/build/outputs/apk/debug/app-debug.apk
+        path: |
+          app/build/outputs/apk/debug/*-debug.apk
+          !**/*-androidTest-*-debug.apk
+        retention-days: 7
