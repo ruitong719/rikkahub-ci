@@ -5,6 +5,7 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:     # 允许被其他 workflow 手动触发
 
 jobs:
   build:
@@ -66,7 +67,7 @@ jobs:
           --parallel \
           --max-workers=2
 
-    # 🔍 查找 APK 文件
+    # 📦 查找 APK 文件
     - name: Find APK files
       run: |
         echo "=== Searching for APK files ==="
