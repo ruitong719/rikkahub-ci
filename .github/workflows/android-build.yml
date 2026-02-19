@@ -10,75 +10,101 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write  # 🔐 必须：允许创建/更新 Release
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup google-services.json
-      run: |
-        echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+      - name: Setup google-services.json
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: 'gradle'
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
 
-    # 🔧 缓存 Gradle Wrapper
-    - name: Cache Gradle Wrapper
-      uses: actions/cache@v4
-      with:
-        path: ~/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+      - name: Cache Gradle Wrapper
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
 
-    # 🔧 缓存 Gradle 依赖
-    - name: Cache Gradle Dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/jdks
-        key: ${{ runner.os }}-gradle-deps-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-deps-
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/jdks
+          key: ${{ runner.os }}-gradle-deps-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-deps-
 
-    # 🔧 缓存 Build Cache
-    - name: Cache Build Cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/build-cache
-          .gradle/build-cache
-        key: ${{ runner.os }}-build-cache-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-build-cache-
+      - name: Cache Build Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/build-cache
+            .gradle/build-cache
+          key: ${{ runner.os }}-build-cache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-build-cache-
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-    # 🔧 优化构建参数
-    - name: Build with Gradle
-      run: |
-        ./gradlew assembleDebug \
-          --no-daemon \
-          --build-cache \
-          --parallel \
-          --max-workers=2
+      - name: Build with Gradle
+        run: |
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --build-cache \
+            --parallel \
+            --max-workers=2
 
-    # 📦 查找 APK 文件
-    - name: Find APK files
-      run: |
-        echo "=== Searching for APK files ==="
-        find . -name "*.apk" -type f
+      - name: Find APK files
+        run: |
+          echo "=== Searching for APK files ==="
+          find . -name "*.apk" -type f
 
-    # 📦 修复：使用通配符上传 APK
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug-apk
-        path: |
-          app/build/outputs/apk/debug/*-debug.apk
-          !**/*-androidTest-*-debug.apk
-        retention-days: 7
+      # 📦 上传到 Artifacts（Actions 页面下载，保留7天）
+      - name: Upload APK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: |
+            app/build/outputs/apk/debug/*-debug.apk
+            !**/*-androidTest-*-debug.apk
+          retention-days: 7
+
+      # 🚀 上传到 Release（Releases 页面下载，永久保留）
+      - name: Upload APK to Release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-debug  # 固定 tag，每次覆盖更新
+          name: 🚀 Latest Debug Build
+          body: |
+            ## 📱 RikkaHub Debug 版本
+            
+            ### 📥 下载说明
+            - **app-universal-debug.apk**: 通用版本，兼容所有设备（推荐）
+            - **app-arm64-v8a-debug.apk**: ARM64 设备（体积小）
+            - **app-x86_64-debug.apk**: 模拟器/平板
+            
+            ### ℹ️ 版本信息
+            - 构建时间: ${{ github.event.head_commit.timestamp }}
+            - 提交 SHA: ${{ github.sha }}
+            - 触发方式: ${{ github.event_name }}
+            
+            > ⚠️ **注意**: Debug 版本包含调试信息，体积较大，仅用于测试
+          files: |
+            app/build/outputs/apk/debug/*-debug.apk
+          prerelease: true  # 标记为预发布
+          draft: false  # 直接发布，不设草稿
+          fail_on_unmatched_files: true  # 文件找不到时失败
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
