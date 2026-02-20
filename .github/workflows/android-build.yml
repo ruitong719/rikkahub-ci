@@ -1,143 +1,122 @@
-name: Android Release Build
+name: 🔑 Keystore 验证纯测试（不编译）
 on:
-  workflow_dispatch:      # 🔘 手动触发发布
-  push:
-    tags:
-      - 'v*'            # 🏷️ 推送带版本号的 tag 时自动触发（如 v1.9.0）
+  workflow_dispatch: # 强制手动触发，避免误跑
+
 jobs:
-  release:
+  verify_signing:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write    # 🔐 允许创建/更新 Release
     steps:
-      - name: Checkout code
+      - name: 1. Checkout 项目框架（仅需目录结构）
         uses: actions/checkout@v4
-      - name: Setup google-services.json
-        run: |
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
-      # 🔑 动态生成 local.properties（不改动项目文件！）
-      - name: Generate local.properties for signing
-        run: |
-          cat > app/local.properties <<EOF
-          storeFile=keystore.jks
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          EOF
-          cat app/local.properties
-      # 🔑 解码并放置 keystore 文件
-      - name: Setup Keystore
-        run: |
-          echo '${{ secrets.KEYSTORE_FILE }}' | base64 -d > app/keystore.jks
-          ls -lh app/keystore.jks
-      - name: Set up JDK 17
+        # 只拉取最后1次提交，更快，且不需要完整代码
+        with:
+          fetch-depth: 1
+
+      - name: 2. 环境准备
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
-      - name: Cache Gradle Wrapper
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
-      - name: Cache Gradle Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/jdks
-          key: ${{ runner.os }}-gradle-deps-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-deps-
-      - name: Cache Build Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/build-cache
-            .gradle/build-cache
-          key: ${{ runner.os }}-build-cache-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-build-cache-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
 
-      # 🛡️ 【新增】临时添加 R8 规则，修复 Ktor 缺失类问题
-      - name: Fix R8 Missing Classes for Ktor
+      # ⚠️ 验证步骤核心：解码 + 验证密钥文件存在 + 解码有效
+      - name: 3. 🔐 解码并验证 Keystore 物理完整性
+        id: decode_keystore
         run: |
-          # 确保 proguard-rules.pro 文件存在
-          if [ ! -f app/proguard-rules.pro ]; then
-            touch app/proguard-rules.pro
-          fi
-          # 追加规则：忽略缺失的 JVM 管理类，处理 Ktor 调试代码
-          cat >> app/proguard-rules.pro << 'EOF'
-          # Fix for Ktor missing java.lang.management classes on Android
-          -dontwarn java.lang.management.ManagementFactory
-          -dontwarn java.lang.management.RuntimeMXBean
-          -dontwarn io.ktor.util.debug.**
-          -keep class io.ktor.util.debug.IntellijIdeaDebugDetector { *; }
-          EOF
-
-      # 🔨 构建 Release 版本（APK + AAB）
-      - name: Build Release APK & AAB
-        run: |
-          ./gradlew assembleRelease bundleRelease \
-            --no-daemon \
-            --build-cache \
-            --parallel \
-            --max-workers=2
-      # 🔍 验证构建产物
-      - name: Find APK/AAB files
-        run: |
-          echo "=== APK files ==="
-          find app/build/outputs/apk/release -name "*.apk" -type f 2>/dev/null || echo "No APK found"
+          echo "--- 步骤3.1 开始解码 ---"
+          mkdir -p app/
+          # 解码，加 --ignore-garbage 防止可能的首尾空白影响（虽然正常情况下没有）
+          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/keystore.jks
           echo ""
-          echo "=== AAB files ==="
-          find app/build/outputs/bundle/release -name "*.aab" -type f 2>/dev/null || echo "No AAB found"
-      # 📦 上传到 Artifacts（临时，7天）
-      - name: Upload APK/AAB to Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-builds
-          path: |
-            app/build/outputs/apk/release/*-release.apk
-            app/build/outputs/bundle/release/*.aab
-          retention-days: 7
-      # 🚀 上传到 GitHub Release（永久）
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}  # 使用触发的 tag 名称
-          name: 🎉 RikkaHub v${{ github.ref_name }}
-          body: |
-            ## 📱 RikkaHub Release 版本
-            
-            ### 📥 下载说明
-            - **app-universal-release.apk**: 通用版本，兼容所有设备（推荐）
-            - **app-arm64-v8a-release.apk**: ARM64 专用（体积小，性能优）
-            - **app-x86_64-release.apk**: x86_64 专用
-            - **app-release.aab**: Google Play 上传格式（推荐上架使用）
-            
-            ### ℹ️ 版本信息
-            - 版本号: ${{ github.ref_name }}
-            - 构建时间: ${{ github.event.head_commit.timestamp || github.event.head_commit.committer.date }}
-            - 提交 SHA: ${{ github.sha }}
-            - 触发方式: ${{ github.event_name }}
-            
-            ### ✨ 版本亮点
-            <!-- 在此处填写本次更新内容 -->
-            - 新增功能...
-            - 修复问题...
-            - 优化体验...
-            
-            > ⚠️ **注意**: 
-            > - Release 版本已签名并优化，可直接安装使用
-            > - 如需上架 Google Play，请使用 `.aab` 文件
-          files: |
-            app/build/outputs/apk/release/*-release.apk
-            app/build/outputs/bundle/release/*.aab
-          prerelease: false    # 正式发布
-          draft: false
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+          echo "--- 步骤3.2 验证文件是否生成、大小是否正常 ---"
+          if [ -f app/keystore.jks ]; then
+              SIZE_KB=$(du -k app/keystore.jks | awk '{print $1}')
+              echo "✅ Keystore 文件已生成：app/keystore.jks"
+              echo "📊 文件大小：${SIZE_KB} KB"
+              if [ "${SIZE_KB}" -lt 1 ]; then
+                  echo "❌ 严重错误：文件大小小于1KB，Base64 大概率编码错误！"
+                  exit 1
+              fi
+          else
+              echo "❌ 严重错误：Keystore 文件未生成！检查 Secrets 是否命名为 KEYSTORE_FILE 且有内容"
+              exit 1
+          fi
+          echo ""
+          
+          echo "--- 步骤3.3 简单验证文件格式 ---"
+          file_output=$(file app/keystore.jks)
+          echo "🔍 file 命令输出：${file_output}"
+          if [[ "${file_output}" == *"Java KeyStore"* ]] || [[ "${file_output}" == *"PKCS12"* ]] || [[ "${file_output}" == *"data"* ]]; then
+              echo "✅ 文件格式初步通过（可能是 JKS/PKCS12）"
+          else
+              echo "⚠️ 警告：file 命令未识别为标准 JKS/PKCS12，继续用 keytool 验证"
+          fi
+          echo ""
+
+      # ⚠️ 核心验证步骤：密码、别名是否正确
+      - name: 4. 🧩 验证 Keystore 密码、Key 别名、Key 密码
+        id: keytool_verify
+        run: |
+          echo "--- 步骤4.1 验证 Keystore 主密码 ---"
+          if keytool -list -keystore app/keystore.jks -storetype JKS -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt 2>&1 | grep -q "Keystore type"; then
+              echo "✅ Keystore 主密码（KEYSTORE_PASSWORD）正确"
+          else
+              echo "❌ 严重错误：Keystore 主密码错误！请检查 Secrets 中的 KEYSTORE_PASSWORD"
+              # 打印详细错误但不暴露密码
+              keytool -list -keystore app/keystore.jks -storetype JKS -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt 2>&1 || true
+              exit 1
+          fi
+          echo ""
+          
+          echo "--- 步骤4.2 获取并检查所有可用别名 ---"
+          ALL_ALIASES=$(keytool -list -keystore app/keystore.jks -storetype JKS -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt 2>&1 | grep -E "PrivateKeyEntry|SecretKeyEntry|TrustedCertificateEntry" | cut -d, -f1)
+          echo "📋 找到的所有有效 Key/证书 别名："
+          echo "${ALL_ALIASES}"
+          echo ""
+          
+          echo "--- 步骤4.3 验证你提供的 Key 别名（KEY_ALIAS）是否存在 ---"
+          if echo "${ALL_ALIASES}" | grep -q "^${{ secrets.KEY_ALIAS }}$"; then
+              echo "✅ Key 别名（KEY_ALIAS）存在：${{ secrets.KEY_ALIAS }}"
+          else
+              echo "❌ 严重错误：Key 别名（KEY_ALIAS）不存在！"
+              exit 1
+          fi
+          echo ""
+          
+          echo "--- 步骤4.4 验证 Key 密码（KEY_PASSWORD）是否正确 ---"
+          if keytool -keypasswd -keystore app/keystore.jks -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" -new "${{ secrets.KEY_PASSWORD }}" -noprompt 2>&1; then
+              echo "✅ Key 密码（KEY_PASSWORD）正确（未修改实际密码）"
+          else
+              echo "❌ 严重错误：Key 密码（KEY_PASSWORD）错误！"
+              keytool -keypasswd -keystore app/keystore.jks -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" -new "${{ secrets.KEY_PASSWORD }}" -noprompt 2>&1 || true
+              exit 1
+          fi
+          echo ""
+
+      # ⚠️ 模拟 Android Gradle Plugin 注入路径的检查
+      - name: 5. 📝 模拟 AGP 签名路径检查
+        id: agp_mock
+        run: |
+          echo "--- 步骤5.1 检查 AGP 注入路径是否与解码路径一致 ---"
+          AGP_EXPECTED_PATH="app/keystore.jks"
+          if [ -f "${AGP_EXPECTED_PATH}" ]; then
+              echo "✅ AGP 注入路径 ${AGP_EXPECTED_PATH} 有效"
+          else
+              echo "❌ 严重错误：AGP 注入路径 ${AGP_EXPECTED_PATH} 无效"
+              exit 1
+          fi
+          echo ""
+          
+          echo "--- 步骤5.2 检查是否能正常列出该路径的权限 ---"
+          ls -lha "${AGP_EXPECTED_PATH}"
+          echo ""
+
+      - name: 6. 🎉 所有验证通过！打印最终结果
+        run: |
+          echo "##########################################################################"
+          echo "# 🎊 Keystore 验证全！部！通！过！🎉                                    #"
+          echo "#                                                                        #"
+          echo "# 接下来你可以：                                                         #"
+          echo "# 1. 确认这份完整输出的最后几行（验证通过的标记）                       #"
+          echo "# 2. 回到之前的修复版 Release 编译 Workflow 了                          #"
+          echo "##########################################################################"
