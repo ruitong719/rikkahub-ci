@@ -1,72 +1,121 @@
-name: 🔑 Keystore 验证纯测试（兼容 PKCS12 版）
+name: 🚀 RikkaHub 正式编译发布
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 允许你手动点击发布
+  push:
+    tags:
+      - 'v*' # 推送到 v1.0.0 这种 Tag 时自动发布
 
 jobs:
-  verify_signing:
+  build_release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须有，才能创建 GitHub Release
     steps:
-      - name: 1. Checkout
+      - name: 1. 拉取代码
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
 
-      - name: 2. Setup Java
-        uses: actions/setup-java@v4
-        with: { java-version: '17', distribution: 'temurin' }
+      - name: 2. 还原 Firebase 配置文件 (google-services.json)
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+          # 检查文件是否生成（可选）
+          ls -lha app/google-services.json
 
-      - name: 3. 🔐 解码 Keystore
-        id: decode_keystore
+      - name: 3. 🔐 还原 PKCS12 签名密钥
         run: |
           mkdir -p app/
-          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/keystore.p12
-          
-          if [ -f app/keystore.p12 ]; then
-              SIZE_KB=$(du -k app/keystore.p12 | awk '{print $1}')
-              echo "✅ 文件生成 (${SIZE_KB} KB)"
-              if [ "${SIZE_KB}" -lt 1 ]; then exit 1; fi
-          else
-              echo "❌ 文件未生成" && exit 1
-          fi
+          # 直接解码为 p12，显式指定忽略 base64 可能的干扰
+          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/release-key.p12
+          ls -lha app/release-key.p12
 
-      - name: 4. 🧩 全能验证 (兼容 PKCS12/JKS)
-        id: keytool_verify
+      - name: 4. 配置 JDK 17 + 开启 Gradle 自动缓存
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle' # setup-java 自带的简单但高效的缓存
+
+      - name: 5. 额外缓存 Gradle Wrapper
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-wrapper-
+
+      - name: 6. 赋予 gradlew 执行权限
+        run: chmod +x gradlew
+
+      - name: 7. 🛡️ 临时补全 Ktor 相关 R8 规则（避免构建报错）
         run: |
-          echo "--- 步骤4.1: 列出所有信息，验证主密码 ---"
-          # -v 会显示详细信息，同时也验证了 store password
-          if keytool -list -v -keystore app/keystore.p12 -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt > keystore_info.txt; then
-              echo "✅ Keystore 主密码正确"
-          else
-              echo "❌ 主密码错误" && exit 1
+          if [ ! -f app/proguard-rules.pro ]; then
+            touch app/proguard-rules.pro
           fi
-          echo ""
+          # 追加规则（如果规则已存在会重复，但不影响，也可以先检查再追加，这里图简单）
+          cat >> app/proguard-rules.pro << 'EOF'
+          # Fix for Ktor missing java.lang.management classes on Android
+          -dontwarn java.lang.management.ManagementFactory
+          -dontwarn java.lang.management.RuntimeMXBean
+          -dontwarn io.ktor.util.debug.**
+          -keep class io.ktor.util.debug.IntellijIdeaDebugDetector { *; }
+          EOF
 
-          echo "--- 步骤4.2: 检查别名是否存在 ---"
-          # 从刚才的输出里找别名
-          if grep -q "Alias name: ${{ secrets.KEY_ALIAS }}" keystore_info.txt; then
-              echo "✅ 别名 (${{ secrets.KEY_ALIAS }}) 存在"
-          else
-              echo "❌ 别名不存在，下面是找到的所有别名："
-              grep "Alias name:" keystore_info.txt
-              exit 1
-          fi
-          echo ""
-
-          echo "--- 步骤4.3: 验证 Key 密码 (PKCS12 友好方式) ---"
-          # 尝试导出私钥相关信息，如果成功，说明 Key 密码和 Store 密码都对
-          # 注意：PKCS12 要求两者一致，所以如果能列出 Entry 详情，基本就没问题
-          # 我们这里尝试用 alias 单独列一次来确认
-          if keytool -list -v -keystore app/keystore.p12 -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" -noprompt > /dev/null 2>&1; then
-              echo "✅ Key 密码与 Keystore 匹配 (完美！)"
-          else
-              echo "❌ Key 密码错误！"
-              exit 1
-          fi
-          echo ""
-
-      - name: 5. 🎉 所有验证通过！
+      - name: 8. 🔨 核心编译：生成 Release APK + AAB（带 PKCS12 显式签名）
         run: |
-          echo "##########################################################################"
-          echo "# 🎊 全！部！通！过！🎉                                                 #"
-          echo "#                                                                        #"
-          echo "# 现在请去运行那个『🚀 RikkaHub 正式版构建』Workflow 吧！              #"
-          echo "##########################################################################"
+          ./gradlew assembleRelease bundleRelease \
+            --no-daemon \
+            --build-cache \
+            --parallel \
+            --max-workers=2 \
+            # 🔑 这里是 PKCS12 专用的完整签名注入参数
+            -Pandroid.injected.signing.store.file=app/release-key.p12 \
+            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }} \
+            -Pandroid.injected.signing.store.type=PKCS12
+
+      - name: 9. 📋 查找并列出所有构建产物（方便排查）
+        run: |
+          echo "--- 📦 Release APK 文件列表 ---"
+          find app/build/outputs/apk/release -name "*.apk" -type f || echo "⚠️ 未找到 APK"
+          echo ""
+          echo "--- 📦 Release AAB 文件列表 ---"
+          find app/build/outputs/bundle/release -name "*.aab" -type f || echo "⚠️ 未找到 AAB"
+
+      - name: 10. 📤 上传构建产物到 GitHub Artifacts（保存 7 天）
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-final-release-builds
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+          retention-days: 7
+
+      - name: 11. 🚀 自动发布到 GitHub Release（仅 Tag 模式触发）
+        uses: softprops/action-gh-release@v2
+        # 只有当推送到 v 开头的 Tag 时才执行发布，手动触发只生成 Artifacts
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: 🎉 RikkaHub ${{ github.ref_name }} 正式发布
+          body: |
+            ## 📱 RikkaHub 发布页面
+            
+            ### 📥 下载说明
+            - **通用 APK**: `app-universal-release.apk`（如果配置了 splits）/ `app-release.apk`（未配置），所有设备通用，推荐下载
+            - **AAB 格式**: `app-release.aab`，Google Play 商店上架专用
+            - **架构专用 APK**: 如 `app-arm64-v8a-release.apk`，体积更小（如果配置了 splits）
+            
+            ### 📊 版本信息
+            - 版本 Tag: ${{ github.ref_name }}
+            - 构建时间: ${{ github.event.head_commit.timestamp || '查看右侧发布时间' }}
+            - 提交 SHA: ${{ github.sha }}
+            - 构建机器: Ubuntu Latest
+            
+            ### ✨ 版本亮点（待补充）
+            <!-- 请在这里手动添加本次更新的具体内容，或在仓库的 CHANGELOG.md 里维护后粘贴过来 -->
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+          fail_on_unmatched_files: true # 找不到文件就报错，防止白跑
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
