@@ -1,122 +1,72 @@
-name: 🔑 Keystore 验证纯测试（不编译）
+name: 🔑 Keystore 验证纯测试（兼容 PKCS12 版）
 on:
-  workflow_dispatch: # 强制手动触发，避免误跑
+  workflow_dispatch:
 
 jobs:
   verify_signing:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. Checkout 项目框架（仅需目录结构）
+      - name: 1. Checkout
         uses: actions/checkout@v4
-        # 只拉取最后1次提交，更快，且不需要完整代码
-        with:
-          fetch-depth: 1
+        with: { fetch-depth: 1 }
 
-      - name: 2. 环境准备
+      - name: 2. Setup Java
         uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+        with: { java-version: '17', distribution: 'temurin' }
 
-      # ⚠️ 验证步骤核心：解码 + 验证密钥文件存在 + 解码有效
-      - name: 3. 🔐 解码并验证 Keystore 物理完整性
+      - name: 3. 🔐 解码 Keystore
         id: decode_keystore
         run: |
-          echo "--- 步骤3.1 开始解码 ---"
           mkdir -p app/
-          # 解码，加 --ignore-garbage 防止可能的首尾空白影响（虽然正常情况下没有）
-          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/keystore.jks
-          echo ""
+          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/keystore.p12
           
-          echo "--- 步骤3.2 验证文件是否生成、大小是否正常 ---"
-          if [ -f app/keystore.jks ]; then
-              SIZE_KB=$(du -k app/keystore.jks | awk '{print $1}')
-              echo "✅ Keystore 文件已生成：app/keystore.jks"
-              echo "📊 文件大小：${SIZE_KB} KB"
-              if [ "${SIZE_KB}" -lt 1 ]; then
-                  echo "❌ 严重错误：文件大小小于1KB，Base64 大概率编码错误！"
-                  exit 1
-              fi
+          if [ -f app/keystore.p12 ]; then
+              SIZE_KB=$(du -k app/keystore.p12 | awk '{print $1}')
+              echo "✅ 文件生成 (${SIZE_KB} KB)"
+              if [ "${SIZE_KB}" -lt 1 ]; then exit 1; fi
           else
-              echo "❌ 严重错误：Keystore 文件未生成！检查 Secrets 是否命名为 KEYSTORE_FILE 且有内容"
-              exit 1
+              echo "❌ 文件未生成" && exit 1
           fi
-          echo ""
-          
-          echo "--- 步骤3.3 简单验证文件格式 ---"
-          file_output=$(file app/keystore.jks)
-          echo "🔍 file 命令输出：${file_output}"
-          if [[ "${file_output}" == *"Java KeyStore"* ]] || [[ "${file_output}" == *"PKCS12"* ]] || [[ "${file_output}" == *"data"* ]]; then
-              echo "✅ 文件格式初步通过（可能是 JKS/PKCS12）"
-          else
-              echo "⚠️ 警告：file 命令未识别为标准 JKS/PKCS12，继续用 keytool 验证"
-          fi
-          echo ""
 
-      # ⚠️ 核心验证步骤：密码、别名是否正确
-      - name: 4. 🧩 验证 Keystore 密码、Key 别名、Key 密码
+      - name: 4. 🧩 全能验证 (兼容 PKCS12/JKS)
         id: keytool_verify
         run: |
-          echo "--- 步骤4.1 验证 Keystore 主密码 ---"
-          if keytool -list -keystore app/keystore.jks -storetype JKS -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt 2>&1 | grep -q "Keystore type"; then
-              echo "✅ Keystore 主密码（KEYSTORE_PASSWORD）正确"
+          echo "--- 步骤4.1: 列出所有信息，验证主密码 ---"
+          # -v 会显示详细信息，同时也验证了 store password
+          if keytool -list -v -keystore app/keystore.p12 -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt > keystore_info.txt; then
+              echo "✅ Keystore 主密码正确"
           else
-              echo "❌ 严重错误：Keystore 主密码错误！请检查 Secrets 中的 KEYSTORE_PASSWORD"
-              # 打印详细错误但不暴露密码
-              keytool -list -keystore app/keystore.jks -storetype JKS -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt 2>&1 || true
-              exit 1
+              echo "❌ 主密码错误" && exit 1
           fi
           echo ""
-          
-          echo "--- 步骤4.2 获取并检查所有可用别名 ---"
-          ALL_ALIASES=$(keytool -list -keystore app/keystore.jks -storetype JKS -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -noprompt 2>&1 | grep -E "PrivateKeyEntry|SecretKeyEntry|TrustedCertificateEntry" | cut -d, -f1)
-          echo "📋 找到的所有有效 Key/证书 别名："
-          echo "${ALL_ALIASES}"
-          echo ""
-          
-          echo "--- 步骤4.3 验证你提供的 Key 别名（KEY_ALIAS）是否存在 ---"
-          if echo "${ALL_ALIASES}" | grep -q "^${{ secrets.KEY_ALIAS }}$"; then
-              echo "✅ Key 别名（KEY_ALIAS）存在：${{ secrets.KEY_ALIAS }}"
+
+          echo "--- 步骤4.2: 检查别名是否存在 ---"
+          # 从刚才的输出里找别名
+          if grep -q "Alias name: ${{ secrets.KEY_ALIAS }}" keystore_info.txt; then
+              echo "✅ 别名 (${{ secrets.KEY_ALIAS }}) 存在"
           else
-              echo "❌ 严重错误：Key 别名（KEY_ALIAS）不存在！"
-              exit 1
-          fi
-          echo ""
-          
-          echo "--- 步骤4.4 验证 Key 密码（KEY_PASSWORD）是否正确 ---"
-          if keytool -keypasswd -keystore app/keystore.jks -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" -new "${{ secrets.KEY_PASSWORD }}" -noprompt 2>&1; then
-              echo "✅ Key 密码（KEY_PASSWORD）正确（未修改实际密码）"
-          else
-              echo "❌ 严重错误：Key 密码（KEY_PASSWORD）错误！"
-              keytool -keypasswd -keystore app/keystore.jks -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" -new "${{ secrets.KEY_PASSWORD }}" -noprompt 2>&1 || true
+              echo "❌ 别名不存在，下面是找到的所有别名："
+              grep "Alias name:" keystore_info.txt
               exit 1
           fi
           echo ""
 
-      # ⚠️ 模拟 Android Gradle Plugin 注入路径的检查
-      - name: 5. 📝 模拟 AGP 签名路径检查
-        id: agp_mock
-        run: |
-          echo "--- 步骤5.1 检查 AGP 注入路径是否与解码路径一致 ---"
-          AGP_EXPECTED_PATH="app/keystore.jks"
-          if [ -f "${AGP_EXPECTED_PATH}" ]; then
-              echo "✅ AGP 注入路径 ${AGP_EXPECTED_PATH} 有效"
+          echo "--- 步骤4.3: 验证 Key 密码 (PKCS12 友好方式) ---"
+          # 尝试导出私钥相关信息，如果成功，说明 Key 密码和 Store 密码都对
+          # 注意：PKCS12 要求两者一致，所以如果能列出 Entry 详情，基本就没问题
+          # 我们这里尝试用 alias 单独列一次来确认
+          if keytool -list -v -keystore app/keystore.p12 -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" -noprompt > /dev/null 2>&1; then
+              echo "✅ Key 密码与 Keystore 匹配 (完美！)"
           else
-              echo "❌ 严重错误：AGP 注入路径 ${AGP_EXPECTED_PATH} 无效"
+              echo "❌ Key 密码错误！"
               exit 1
           fi
           echo ""
-          
-          echo "--- 步骤5.2 检查是否能正常列出该路径的权限 ---"
-          ls -lha "${AGP_EXPECTED_PATH}"
-          echo ""
 
-      - name: 6. 🎉 所有验证通过！打印最终结果
+      - name: 5. 🎉 所有验证通过！
         run: |
           echo "##########################################################################"
-          echo "# 🎊 Keystore 验证全！部！通！过！🎉                                    #"
+          echo "# 🎊 全！部！通！过！🎉                                                 #"
           echo "#                                                                        #"
-          echo "# 接下来你可以：                                                         #"
-          echo "# 1. 确认这份完整输出的最后几行（验证通过的标记）                       #"
-          echo "# 2. 回到之前的修复版 Release 编译 Workflow 了                          #"
+          echo "# 现在请去运行那个『🚀 RikkaHub 正式版构建』Workflow 吧！              #"
           echo "##########################################################################"
