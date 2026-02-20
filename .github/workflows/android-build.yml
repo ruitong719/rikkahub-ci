@@ -20,22 +20,35 @@ jobs:
         run: |
           echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
 
-      # 🔑 动态生成 local.properties（不改动项目文件！）
-      - name: Generate local.properties for signing
-        run: |
-          cat > app/local.properties <<EOF
-          storeFile=keystore.jks
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          EOF
-          cat app/local.properties
-
-      # 🔑 解码并放置 keystore 文件
+      # 🔑 解码并放置 keystore 文件（必须在 local.properties 之前）
       - name: Setup Keystore
         run: |
           echo '${{ secrets.KEYSTORE_FILE }}' | base64 -d > app/keystore.jks
           ls -lh app/keystore.jks
+
+      # 🔑 动态生成 local.properties（不改动项目文件！）
+      - name: Generate local.properties for signing
+        run: |
+          cat > app/local.properties <<EOF
+storeFile=keystore.jks
+storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+keyAlias=${{ secrets.KEY_ALIAS }}
+keyPassword=${{ secrets.KEY_PASSWORD }}
+EOF
+          cat app/local.properties
+
+      # 🔧 修复 R8 混淆错误：Ktor 引用 Android 不存在的 Java SE 类
+      - name: Append ProGuard rules for Ktor (fix R8 missing classes)
+        run: |
+          cat >> app/proguard-rules.pro <<'EOF'
+
+# Ktor uses Java SE management API which is not available on Android
+# These classes are only used for IntelliJ debugger detection and never called on Android
+-dontwarn java.lang.management.**
+-dontwarn io.ktor.util.debug.IntellijIdeaDebugDetector
+EOF
+          echo "=== Updated proguard-rules.pro (last 5 lines) ==="
+          tail -5 app/proguard-rules.pro
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
