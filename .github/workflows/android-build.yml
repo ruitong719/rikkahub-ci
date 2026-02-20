@@ -46,7 +46,23 @@ jobs:
           echo ""
           echo "--- ✅ App 模块目录结构 ---"
           ls -la app/
-
+     
+      # 🛡️ 【新增】临时添加 R8 规则，修复 Ktor 缺失类问题
+      - name: Fix R8 Missing Classes for Ktor
+        run: |
+          # 确保 proguard-rules.pro 文件存在
+          if [ ! -f app/proguard-rules.pro ]; then
+            touch app/proguard-rules.pro
+          fi
+          # 追加规则：忽略缺失的 JVM 管理类，处理 Ktor 调试代码
+          cat >> app/proguard-rules.pro << 'EOF'
+          # Fix for Ktor missing java.lang.management classes on Android
+          -dontwarn java.lang.management.ManagementFactory
+          -dontwarn java.lang.management.RuntimeMXBean
+          -dontwarn io.ktor.util.debug.**
+          -keep class io.ktor.util.debug.IntellijIdeaDebugDetector { *; }
+          EOF
+      
       - name: 5. 配置 JDK 17
         uses: actions/setup-java@v4
         with:
