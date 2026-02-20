@@ -1,18 +1,17 @@
-name: Android CI
+name: Android Release Build
 
 on:
+  workflow_dispatch:      # 🔘 手动触发发布
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
-  workflow_dispatch:     # 允许被其他 workflow 手动触发
+    tags:
+      - 'v*'            # 🏷️ 推送带版本号的 tag 时自动触发（如 v1.9.0）
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 🔐 必须：允许创建/更新 Release
-    
+      contents: write    # 🔐 允许创建/更新 Release
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,6 +19,23 @@ jobs:
       - name: Setup google-services.json
         run: |
           echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+
+      # 🔑 动态生成 local.properties（不改动项目文件！）
+      - name: Generate local.properties for signing
+        run: |
+          cat > app/local.properties <<EOF
+          storeFile=keystore.jks
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
+          cat app/local.properties
+
+      # 🔑 解码并放置 keystore 文件
+      - name: Setup Keystore
+        run: |
+          echo '${{ secrets.KEYSTORE_FILE }}' | base64 -d > app/keystore.jks
+          ls -lh app/keystore.jks
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -57,54 +73,69 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build with Gradle
+      # 🔨 构建 Release 版本（APK + AAB）
+      - name: Build Release APK & AAB
         run: |
-          ./gradlew assembleDebug \
+          ./gradlew assembleRelease bundleRelease \
             --no-daemon \
             --build-cache \
             --parallel \
             --max-workers=2
 
-      - name: Find APK files
+      # 🔍 验证构建产物
+      - name: Find APK/AAB files
         run: |
-          echo "=== Searching for APK files ==="
-          find . -name "*.apk" -type f
+          echo "=== APK files ==="
+          find app/build/outputs/apk/release -name "*.apk" -type f 2>/dev/null || echo "No APK found"
+          echo ""
+          echo "=== AAB files ==="
+          find app/build/outputs/bundle/release -name "*.aab" -type f 2>/dev/null || echo "No AAB found"
 
-      # 📦 上传到 Artifacts（Actions 页面下载，保留7天）
-      - name: Upload APK to Artifacts
+      # 📦 上传到 Artifacts（临时，7天）
+      - name: Upload APK/AAB to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
+          name: app-release-builds
           path: |
-            app/build/outputs/apk/debug/*-debug.apk
-            !**/*-androidTest-*-debug.apk
+            app/build/outputs/apk/release/*-release.apk
+            app/build/outputs/bundle/release/*.aab
           retention-days: 7
 
-      # 🚀 上传到 Release（Releases 页面下载，永久保留）
-      - name: Upload APK to Release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      # 🚀 上传到 GitHub Release（永久）
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-debug  # 固定 tag，每次覆盖更新
-          name: 🚀 Latest Debug Build
+          tag_name: ${{ github.ref_name }}  # 使用触发的 tag 名称
+          name: 🎉 RikkaHub v${{ github.ref_name }}
           body: |
-            ## 📱 RikkaHub Debug 版本
+            ## 📱 RikkaHub Release 版本
             
             ### 📥 下载说明
-            - **app-universal-debug.apk**: 通用版本，兼容所有设备（推荐）
-            - **app-arm64-v8a-debug.apk**: ARM64 设备（体积小）
-            - **app-x86_64-debug.apk**: 模拟器/平板
+            - **app-universal-release.apk**: 通用版本，兼容所有设备（推荐）
+            - **app-arm64-v8a-release.apk**: ARM64 专用（体积小，性能优）
+            - **app-x86_64-release.apk**: x86_64 专用
+            - **app-release.aab**: Google Play 上传格式（推荐上架使用）
             
             ### ℹ️ 版本信息
-            - 构建时间: ${{ github.event.head_commit.timestamp }}
+            - 版本号: ${{ github.ref_name }}
+            - 构建时间: ${{ github.event.head_commit.timestamp || github.event.head_commit.committer.date }}
             - 提交 SHA: ${{ github.sha }}
             - 触发方式: ${{ github.event_name }}
             
-            > ⚠️ **注意**: Debug 版本包含调试信息，体积较大，仅用于测试
+            ### ✨ 版本亮点
+            <!-- 在此处填写本次更新内容 -->
+            - 新增功能...
+            - 修复问题...
+            - 优化体验...
+            
+            > ⚠️ **注意**: 
+            > - Release 版本已签名并优化，可直接安装使用
+            > - 如需上架 Google Play，请使用 `.aab` 文件
           files: |
-            app/build/outputs/apk/debug/*-debug.apk
-          prerelease: true  # 标记为预发布
-          draft: false  # 直接发布，不设草稿
-          fail_on_unmatched_files: true  # 文件找不到时失败
+            app/build/outputs/apk/release/*-release.apk
+            app/build/outputs/bundle/release/*.aab
+          prerelease: false    # 正式发布
+          draft: false
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
