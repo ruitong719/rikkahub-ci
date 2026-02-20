@@ -2,8 +2,8 @@ name: 🚀 RikkaHub 最终稳定构建
 on:
   workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - '**'
 
 jobs:
   build_release:
@@ -74,7 +74,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: 7. 🔨 构建 APK + AAB（必成版）
-        run: ./gradlew assembleRelease bundleRelease --no-daemon --build-cache
+        run: ./gradlew assembleRelease bundleRelease --no-daemon --build-cache --parallel
 
       - name: 8. 📤 上传构建产物
         uses: actions/upload-artifact@v4
@@ -85,10 +85,55 @@ jobs:
             app/build/outputs/bundle/release/*.aab
           retention-days: 7
 
-      - name: 9. 🚀 发布到 GitHub Release
+      - name: 9. 📝 生成版本信息
+        id: version_info
+        run: |
+          BUILD_TIME=$(TZ='Asia/Shanghai' date '+%Y-%m-%dT%H:%M:%S+08:00')
+          COMMIT_SHA=${{ github.sha }}
+          SHORT_SHA=$(echo $COMMIT_SHA | cut -c1-7)
+          BRANCH_NAME=${{ github.ref_name }}
+          
+          # 获取上游项目今天合并的 PR
+          TODAY_START=$(TZ='Asia/Shanghai' date -d 'today' '+%Y-%m-%dT00:00:00+08:00')
+          PR_LIST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/rikkahub/rikkahub/pulls?state=closed&per_page=100" | \
+            jq -r --arg today "$TODAY_START" '
+              [.[] | select(.merged_at != null and .merged_at >= $today)] |
+              sort_by(.merged_at) | reverse |
+              .[:20] |
+              map("- #\(.number) \(.title) (@\(.user.login))") |
+              join("\n")
+            ')
+          
+          if [ -z "$PR_LIST" ] || [ "$PR_LIST" = "null" ]; then
+            PR_LIST="* 今天暂无合并的 PR *"
+          fi
+          
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          # 生成 Release 描述
+          cat > release_notes.md << EOF
+          📱 RikkaHub 上游项目 https://github.com/rikkahub/rikkahub
+     
+          
+          🔀 上游项目今日合并的 PR
+          $PR_LIST
+          
+          ℹ️ 版本信息
+          - 构建时间：$BUILD_TIME
+          - 提交 SHA：$SHORT_SHA
+          - 分支：$BRANCH_NAME
+          EOF
+
+      - name: 10. 🚀 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: latest
+          name: 🚀 Latest Release (${{ steps.version_info.outputs.short_sha }})
+          body_path: release_notes.md
+          prerelease: false
           files: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
