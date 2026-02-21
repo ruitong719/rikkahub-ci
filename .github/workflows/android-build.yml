@@ -1,9 +1,6 @@
 name: RikkaHub Release Build
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - '**'
 
 jobs:
   build_release:
