@@ -1,0 +1,75 @@
+name: Test Upstream PR Fetch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 测试获取上游 PR
+        run: |
+          echo "========================================="
+          echo "🧪 测试获取上游项目今日合并的 PR"
+          echo "========================================="
+          
+          # 方法 1：使用 UTC 时间（推荐）
+          echo ""
+          echo "📍 方法 1：使用 UTC 时间"
+          TODAY_START_UTC=$(date -u +%Y-%m-%dT00:00:00Z)
+          echo "今日开始时间 (UTC): $TODAY_START_UTC"
+          
+          PR_LIST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/rikkahub/rikkahub/pulls?state=closed&per_page=100" | \
+            jq -r --arg today "$TODAY_START_UTC" '
+              [.[] | select(.merged_at != null and .merged_at >= $today)] |
+              sort_by(.merged_at) | reverse |
+              .[:20] |
+              map("- #\(.number) \(.title) (@\(.user.login))") |
+              join("\n")
+            ')
+          
+          echo ""
+          echo "📋 PR 列表:"
+          if [ -z "$PR_LIST" ] || [ "$PR_LIST" = "null" ]; then
+            echo "* 今天暂无合并的 PR *"
+          else
+            echo "$PR_LIST"
+          fi
+          
+          # 调试信息：显示原始 API 返回的前 3 个 PR 的 merged_at
+          echo ""
+          echo "🔍 调试信息 - 最近 3 个已关闭 PR 的 merged_at:"
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/rikkahub/rikkahub/pulls?state=closed&per_page=3" | \
+            jq -r '.[] | "\(.number): merged_at=\(.merged_at // "null"), title=\(.title)"'
+          
+          # 方法 2：使用上海时间（对比）
+          echo ""
+          echo "========================================="
+          echo "📍 方法 2：使用上海时间（对比）"
+          TODAY_START_SH=$(TZ='Asia/Shanghai' date '+%Y-%m-%dT00:00:00+08:00')
+          echo "今日开始时间 (上海): $TODAY_START_SH"
+          
+          PR_LIST_SH=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/rikkahub/rikkahub/pulls?state=closed&per_page=100" | \
+            jq -r --arg today "$TODAY_START_SH" '
+              [.[] | select(.merged_at != null and .merged_at >= $today)] |
+              sort_by(.merged_at) | reverse |
+              .[:20] |
+              map("- #\(.number) \(.title) (@\(.user.login))") |
+              join("\n")
+            ')
+          
+          echo ""
+          echo "📋 PR 列表:"
+          if [ -z "$PR_LIST_SH" ] || [ "$PR_LIST_SH" = "null" ]; then
+            echo "* 今天暂无合并的 PR *"
+          else
+            echo "$PR_LIST_SH"
+          fi
+          
+          echo ""
+          echo "========================================="
+          echo "✅ 测试完成"
+          echo "========================================="
