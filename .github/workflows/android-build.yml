@@ -51,21 +51,6 @@ jobs:
           sed -i 's|https://updates.rikka-ai.com/|https://my-rikkahub-update.edgeone.run/update.json|g' app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt
           echo "✅ 更新检查地址已替换为：https://my-rikkahub-update.edgeone.run/update.json"
 
-     
-      # - name: 添加 R8 规则，修复 Ktor 缺失类问题
-      #   run: |
-      #     # 确保 proguard-rules.pro 文件存在
-      #     if [ ! -f app/proguard-rules.pro ]; then
-      #       touch app/proguard-rules.pro
-      #     fi
-      #     # 规则：忽略缺失的 JVM 管理类，处理 Ktor 调试代码
-      #     cat >> app/proguard-rules.pro << 'EOF'
-      #     # Fix for Ktor missing java.lang.management classes on Android
-      #     -dontwarn java.lang.management.ManagementFactory
-      #     -dontwarn java.lang.management.RuntimeMXBean
-      #     -dontwarn io.ktor.util.debug.**
-      #     -keep class io.ktor.util.debug.IntellijIdeaDebugDetector { *; }
-      #     EOF
         
       - name: 修改版本号
         id: version_update
@@ -77,6 +62,7 @@ jobs:
           echo "版本号已更新：${VERSION_NAME} -> ${NEW_VERSION_NAME}"
           echo "original_version=${VERSION_NAME}" >> $GITHUB_OUTPUT
           echo "new_version=${NEW_VERSION_NAME}" >> $GITHUB_OUTPUT      
+          echo "✅ 已修改版本号"
             
       - name: 解码密钥到模块目录
         run: |
@@ -151,10 +137,6 @@ jobs:
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "version_name=$NEW_VERSION_NAME" >> $GITHUB_OUTPUT
-          # 使用 heredoc 方式输出多行变量
-          echo "commit_list<<EOFCOMMITLIST" >> $GITHUB_OUTPUT
-          echo "$COMMIT_LIST" >> $GITHUB_OUTPUT
-          echo "EOFCOMMITLIST" >> $GITHUB_OUTPUT
 
           # 生成 Release 描述
           cat > release_notes.md << EOF
@@ -198,25 +180,36 @@ jobs:
           NEW_VERSION_NAME=${{ steps.version_update.outputs.new_version }}
           BUILD_TIME=$(TZ='Asia/Shanghai' date '+%Y-%m-%dT%H:%M:%S+08:00')
           
-          # 使用 COMMIT_LIST 作为 changelog
-          COMMIT_LIST=${{ steps.version_info.outputs.commit_list }}
+          # 获取上游项目今天的 commit 作为 changelog
+          TODAY_START=$(date -u +%Y-%m-%dT00:00:00Z)
+          COMMIT_LIST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/rikkahub/rikkahub/commits?since=$TODAY_START&per_page=20" | \
+            jq -r '
+              [.[] | select(.commit.author.date >= "'$TODAY_START'")] |
+              map("- \(.commit.message | split("\n")[0])") |
+              join("\n")
+            ')
           
+          if [ -z "$COMMIT_LIST" ] || [ "$COMMIT_LIST" = "null" ]; then
+            COMMIT_LIST="今天暂无 commit"
+          fi
+
           # 查找 APK 文件并计算大小
           APK_FILE=$(find app/build/outputs/apk/release -name "app-release.apk" -type f | head -1)
           if [ -z "$APK_FILE" ]; then
             echo "❌ 未找到 APK 文件"
             exit 1
           fi
-          
+
           # 计算文件大小（字节）
           APK_SIZE_BYTES=$(stat -c%s "$APK_FILE")
-          
+
           # 转换为人类可读格式（MB）
           APK_SIZE_MB=$(echo "scale=2; $APK_SIZE_BYTES / 1024 / 1024" | bc)
-          
+
           # 固定下载地址
           APK_URL="https://gh.llkk.cc/https://github.com/ruitong719/rikkahub-ci/releases/download/latest/app-release.apk"
-          
+
           # 使用 jq 正确生成 JSON（处理特殊字符）
           jq -n \
             --arg version "${NEW_VERSION_NAME}" \
@@ -236,10 +229,7 @@ jobs:
                   size: $size
                 }
               ]
-            }' > update.json         
-
-          # 输出文件路径供后续步骤使用
-          echo "json_file=update.json" >> $GITHUB_OUTPUT
+            }' > update.json
 
       - name: 部署到 EdgeOne Pages
         run: |
