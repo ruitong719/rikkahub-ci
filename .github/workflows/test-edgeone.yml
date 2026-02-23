@@ -74,4 +74,4 @@ jobs:
           edgeone pages deploy edgeone-deploy -n my-rikkahub-update -t ${{ secrets.EDGEONE_API_TOKEN }} -e production
           
           echo "✅ 更新文件已部署到 EdgeOne Pages"
-          echo "📍 访问地址：https://my-rikkahub-update.edgeone.run/update.json
+          echo "📍 访问地址：https://my-rikkahub-update.edgeone.run/update.json"
