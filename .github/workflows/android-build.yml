@@ -51,35 +51,6 @@ jobs:
           sed -i 's|https://updates.rikka-ai.com/|https://my-rikkahub-update.edgeone.run/update.json|g' app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt
           echo "✅ 更新检查地址已替换为：https://my-rikkahub-update.edgeone.run/update.json"
 
-      - name: 解码密钥到模块目录
-        run: |
-          # 直接在项目根目录用 echo 重定向到 app/ 下
-          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/release-key.p12
-          # 验证文件
-          ls -lh app/release-key.p12
-          stat app/release-key.p12
-
-      - name: 生成 local.properties
-        run: |
-          # storeFile 只写文件名！！！！因为模块级的 file() 相对于 app/
-          cat > local.properties << EOF
-          # CI Auto Generated for RikkaHub
-          storeFile=release-key.p12
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          storeType=PKCS12
-          EOF
-          
-          # 打印最终内容确认
-          echo "--- 最终 local.properties 内容 ---"
-          cat local.properties
-          echo ""
-          echo "--- 当前目录结构 ---"
-          ls -la
-          echo ""
-          echo "--- App 模块目录结构 ---"
-          ls -la app/
      
       # - name: 添加 R8 规则，修复 Ktor 缺失类问题
       #   run: |
@@ -106,7 +77,27 @@ jobs:
           echo "版本号已更新：${VERSION_NAME} -> ${NEW_VERSION_NAME}"
           echo "original_version=${VERSION_NAME}" >> $GITHUB_OUTPUT
           echo "new_version=${NEW_VERSION_NAME}" >> $GITHUB_OUTPUT      
-        
+            
+      - name: 解码密钥到模块目录
+        run: |
+          # 直接在项目根目录用 echo 重定向到 app/ 下
+          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/release-key.p12
+          # 验证文件
+          ls -lh app/release-key.p12
+          stat app/release-key.p12
+
+      - name: 生成 local.properties
+        run: |
+          # storeFile 只写文件名！！！！因为模块级的 file() 相对于 app/
+          cat > local.properties << EOF
+          # CI Auto Generated for RikkaHub
+          storeFile=release-key.p12
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          storeType=PKCS12
+          EOF
+          
       - name: 配置 JDK 17
         uses: actions/setup-java@v4
         with:
@@ -160,7 +151,10 @@ jobs:
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "version_name=$NEW_VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "commit_list=$COMMIT_LIST" >> $GITHUB_OUTPUT
+          # 使用 heredoc 方式输出多行变量
+          echo "commit_list<<EOFCOMMITLIST" >> $GITHUB_OUTPUT
+          echo "$COMMIT_LIST" >> $GITHUB_OUTPUT
+          echo "EOFCOMMITLIST" >> $GITHUB_OUTPUT
 
           # 生成 Release 描述
           cat > release_notes.md << EOF
@@ -242,13 +236,7 @@ jobs:
                   size: $size
                 }
               ]
-            }' > update.json
-          
-          echo "=== 生成的 update.json 内容 ==="
-          cat update.json
-          echo ""
-          echo "=== JSON 格式化验证 ==="
-          jq . update.json
+            }' > update.json         
 
           # 输出文件路径供后续步骤使用
           echo "json_file=update.json" >> $GITHUB_OUTPUT
@@ -267,5 +255,4 @@ jobs:
           # 部署到 EdgeOne Pages
           edgeone pages deploy edgeone-deploy -n my-rikkahub-update -t ${{ secrets.EDGEONE_API_TOKEN }} -e production
           
-          echo "✅ 更新文件已部署到 EdgeOne Pages"
-          echo "📍 访问地址：https://my-rikkahub-update.edgeone.run/update.json"
+          echo "✅ 更新日志文件已部署到 EdgeOne Pages"
