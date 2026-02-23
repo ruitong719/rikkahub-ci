@@ -91,12 +91,15 @@ jobs:
       #     EOF
         
       - name: 修改版本号
+        id: version_update
         run: |
           BUILD_DATE=$(TZ='Asia/Shanghai' date '+%Y%m%d')
           VERSION_NAME=$(grep 'versionName =' app/build.gradle.kts | sed 's/.*versionName = "\([^"]*\)".*/\1/')
           NEW_VERSION_NAME="${VERSION_NAME}-${BUILD_DATE}"
           sed -i "s/versionName = \".*\"/versionName = \"${NEW_VERSION_NAME}\"/" app/build.gradle.kts
-          echo "版本号已更新：${VERSION_NAME} -> ${NEW_VERSION_NAME}"      
+          echo "版本号已更新：${VERSION_NAME} -> ${NEW_VERSION_NAME}"
+          echo "original_version=${VERSION_NAME}" >> $GITHUB_OUTPUT
+          echo "new_version=${NEW_VERSION_NAME}" >> $GITHUB_OUTPUT      
         
       - name: 配置 JDK 17
         uses: actions/setup-java@v4
@@ -130,7 +133,8 @@ jobs:
           COMMIT_SHA=${{ github.sha }}
           SHORT_SHA=$(echo $COMMIT_SHA | cut -c1-7)
           BRANCH_NAME=${{ github.ref_name }}
-          VERSION_NAME=$(grep 'versionName =' app/build.gradle.kts | sed 's/.*versionName = "\([^"]*\)".*/\1/')
+          ORIGINAL_VERSION=${{ steps.version_update.outputs.original_version }}
+          NEW_VERSION_NAME=${{ steps.version_update.outputs.new_version }}
 
           # 获取上游项目今天的 commit
           TODAY_START=$(date -u +%Y-%m-%dT00:00:00Z)
@@ -145,11 +149,11 @@ jobs:
           if [ -z "$COMMIT_LIST" ] || [ "$COMMIT_LIST" = "null" ]; then
             COMMIT_LIST="* 今天暂无 commit *"
           fi
-          
+
           echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_name=$NEW_VERSION_NAME" >> $GITHUB_OUTPUT
 
           # 生成 Release 描述
           cat > release_notes.md << EOF
@@ -159,7 +163,7 @@ jobs:
           $COMMIT_LIST
 
           ⚙️ CI 自定义修改
-          - 🔄 修改了版本号：\`${VERSION_NAME}\` → \`${NEW_VERSION_NAME}\`
+          - 🔄 修改了版本号：\`${ORIGINAL_VERSION}\` → \`${NEW_VERSION_NAME}\`
           - 🎨 修改成了旧版的图标文件
           - 🔕 请手动关闭更新检查：设置 → 显示 → 关闭"实时更新通知"
 
