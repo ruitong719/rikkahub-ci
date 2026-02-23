@@ -1,0 +1,77 @@
+name: Test EdgeOne Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 模拟生成 update.json
+        id: generate_json
+        run: |
+          # 模拟构建信息
+          NEW_VERSION_NAME="2.0.0-$(date +%Y%m%d)"
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # 模拟 COMMIT_LIST
+          COMMIT_LIST="测试提交 1
+          测试提交 2
+          测试提交 3"
+          
+          # 模拟 APK 文件大小（假设 50MB）
+          APK_SIZE_MB="50.00"
+          
+          # 固定下载地址
+          APK_URL="https://gh.llkk.cc/https://github.com/ruitong719/rikkahub-ci/releases/download/latest/app-release.apk"
+          
+          # 使用 jq 正确生成 JSON（处理特殊字符）
+          jq -n \
+            --arg version "${NEW_VERSION_NAME}" \
+            --arg publishedAt "${BUILD_TIME}" \
+            --arg changelog "${COMMIT_LIST}" \
+            --arg name "app-release.apk" \
+            --arg url "${APK_URL}" \
+            --arg size "${APK_SIZE_MB} MB" \
+            '{
+              version: $version,
+              publishedAt: $publishedAt,
+              changelog: $changelog,
+              downloads: [
+                {
+                  name: $name,
+                  url: $url,
+                  size: $size
+                }
+              ]
+            }' > update.json
+          
+          echo "=== 生成的 update.json 内容 ==="
+          cat update.json
+          echo ""
+          echo "=== JSON 格式化验证 ==="
+          jq . update.json
+
+      - name: 部署到 EdgeOne Pages
+        run: |
+          # 创建部署目录
+          mkdir -p edgeone-deploy
+          
+          # 复制 update.json 到部署目录
+          cp update.json edgeone-deploy/update.json
+          
+          # 显示部署目录内容
+          echo "=== 部署目录内容 ==="
+          ls -la edgeone-deploy/
+          
+          # 安装 edgeone CLI
+          npm install -g edgeone
+          
+          # 部署到 EdgeOne Pages
+          edgeone pages deploy edgeone-deploy -n my-rikkahub-update -t ${{ secrets.EDGEONE_API_TOKEN }} -e production
+          
+          echo "✅ 更新文件已部署到 EdgeOne Pages"
+          echo "📍 访问地址：https://my-rikkahub-update.edgeone.run/update.json
