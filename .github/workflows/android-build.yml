@@ -148,8 +148,9 @@ jobs:
           ⚙️ CI 自定义修改
           - 🔄 修改了版本号：\`${ORIGINAL_VERSION}\` → \`${NEW_VERSION_NAME}\`
           - 🎨 修改成了旧版的图标文件
-          - 🔕 请手动关闭更新检查：设置 → 显示 → 关闭"实时更新通知"
-          - 🌐 更新检查地址已替换为自定义地址
+          - 🌐 已修改更新地址为自定义地址（下载地址指向本项目的每日构建）
+            - 更新检查地址：https://my-rikkahub-update.edgeone.run/update.json
+            - APK 下载地址：https://gh.llkk.cc/https://github.com/ruitong719/rikkahub-ci/releases/download/latest/app-release.apk
 
           ℹ️ 版本信息
           - 🏷️ 版本号：**${NEW_VERSION_NAME}**
