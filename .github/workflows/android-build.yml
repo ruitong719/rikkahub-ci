@@ -14,9 +14,8 @@ jobs:
       - name: 还原 Google Services
         run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
 
-      - name: 还原旧版图标（覆盖上游更新）
+      - name: 还原旧版图标
         run: |
-          # 复制旧版图标覆盖上游新版本
           cp ci-assets/ic_launcher_mdpi.png app/src/main/res/mipmap-mdpi/ic_launcher.png
           cp ci-assets/ic_launcher_hdpi.png app/src/main/res/mipmap-hdpi/ic_launcher.png
           cp ci-assets/ic_launcher_xhdpi.png app/src/main/res/mipmap-xhdpi/ic_launcher.png
@@ -43,13 +42,12 @@ jobs:
 
           cp ci-assets/rikkahub.svg app/src/main/assets/icons/rikkahub.svg
 
-          echo "✅ 图标已还原为旧版本"
+          echo "✅ 已还原图标为旧版本"
 
       - name: 替换更新检查地址
         run: |
-          # 替换 UpdateChecker.kt 中的更新地址为自定义地址
-          sed -i 's|https://updates.rikka-ai.com/|https://my-rikkahub-update.edgeone.run/update.json|g' app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt
-          echo "✅ 更新检查地址已替换为：https://my-rikkahub-update.edgeone.run/update.json"
+          sed -i 's|https://updates.rikka-ai.com/|https://gh.llkk.cc/https://github.com/ruitong719/rikkahub-ci/releases/download/latest/update.json|g' app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt
+          echo "✅ 已替换更新检查地址"
 
         
       - name: 修改版本号
@@ -66,15 +64,10 @@ jobs:
             
       - name: 解码密钥到模块目录
         run: |
-          # 直接在项目根目录用 echo 重定向到 app/ 下
           echo "${{ secrets.KEYSTORE_FILE }}" | base64 --ignore-garbage -d > app/release-key.p12
-          # 验证文件
-          ls -lh app/release-key.p12
-          stat app/release-key.p12
 
       - name: 生成 local.properties
         run: |
-          # storeFile 只写文件名！！！！因为模块级的 file() 相对于 app/
           cat > local.properties << EOF
           # CI Auto Generated for RikkaHub
           storeFile=release-key.p12
@@ -98,7 +91,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: 构建 APK + AAB
-        run: ./gradlew assembleRelease bundleRelease --warning-mode=summary --no-daemon --parallel
+        run: ./gradlew assembleRelease bundleRelease --warning-mode=none --no-daemon --parallel --build-cache
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
@@ -149,7 +142,7 @@ jobs:
           - 🔄 修改了版本号：\`${ORIGINAL_VERSION}\` → \`${NEW_VERSION_NAME}\`
           - 🎨 修改成了旧版的图标文件
           - 🌐 已修改更新地址为自定义地址（下载地址指向本项目的每日构建）
-            - 更新检查地址：https://my-rikkahub-update.edgeone.run/update.json
+            - 更新检查地址：https://gh.llkk.cc/https://github.com/ruitong719/rikkahub-ci/releases/download/latest/update.json
             - APK 下载地址：https://gh.llkk.cc/https://github.com/ruitong719/rikkahub-ci/releases/download/latest/app-release.apk
 
           ℹ️ 版本信息
@@ -160,27 +153,12 @@ jobs:
 
           EOF
 
-      - name: 发布到 GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: 🚀 Latest Release (${{ steps.version_info.outputs.short_sha }})
-          body_path: release_notes.md
-          prerelease: false
-          files: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/bundle/release/*.aab
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: 生成更新 JSON 文件
         id: update_json
         run: |
-          # 获取构建信息
           NEW_VERSION_NAME=${{ steps.version_update.outputs.new_version }}
           BUILD_TIME=$(TZ='Asia/Shanghai' date '+%Y-%m-%dT%H:%M:%S+08:00')
-          
+
           # 获取上游项目今天的 commit 作为 changelog
           TODAY_START=$(date -u +%Y-%m-%dT00:00:00Z)
           COMMIT_LIST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -190,7 +168,7 @@ jobs:
               map("- \(.commit.message | split("\n")[0])") |
               join("\n")
             ')
-          
+
           if [ -z "$COMMIT_LIST" ] || [ "$COMMIT_LIST" = "null" ]; then
             COMMIT_LIST="今天暂无 commit"
           fi
@@ -204,14 +182,10 @@ jobs:
 
           # 计算文件大小（字节）
           APK_SIZE_BYTES=$(stat -c%s "$APK_FILE")
-
-          # 转换为人类可读格式（MB）
           APK_SIZE_MB=$(echo "scale=2; $APK_SIZE_BYTES / 1024 / 1024" | bc)
-
-          # 固定下载地址
           APK_URL="https://gh.llkk.cc/https://github.com/ruitong719/rikkahub-ci/releases/download/latest/app-release.apk"
 
-          # 使用 jq 正确生成 JSON（处理特殊字符）
+          # 使用 jq 正确生成 JSON
           jq -n \
             --arg version "${NEW_VERSION_NAME}" \
             --arg publishedAt "${BUILD_TIME}" \
@@ -232,18 +206,17 @@ jobs:
               ]
             }' > update.json
 
-      - name: 部署到 EdgeOne Pages
-        run: |
-          # 创建部署目录
-          mkdir -p edgeone-deploy
-          
-          # 复制 update.json 到部署目录
-          cp update.json edgeone-deploy/update.json
-          
-          # 安装 edgeone CLI
-          npm install -g edgeone
-          
-          # 部署到 EdgeOne Pages
-          edgeone pages deploy edgeone-deploy -n my-rikkahub-update -t ${{ secrets.EDGEONE_API_TOKEN }} -e production
-          
-          echo "✅ 更新日志文件已部署到 EdgeOne Pages"
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: 🚀 Latest Release (${{ steps.version_info.outputs.short_sha }})
+          body_path: release_notes.md
+          prerelease: false
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+            update.json
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
