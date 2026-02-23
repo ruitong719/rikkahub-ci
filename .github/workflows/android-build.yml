@@ -14,6 +14,37 @@ jobs:
       - name: 还原 Google Services
         run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
 
+      - name: 还原旧版图标（覆盖上游更新）
+        run: |
+          # 复制旧版图标覆盖上游新版本
+          cp ci-assets/ic_launcher_mdpi.png app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp ci-assets/ic_launcher_hdpi.png app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp ci-assets/ic_launcher_xhdpi.png app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp ci-assets/ic_launcher_xxhdpi.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp ci-assets/ic_launcher_xxxhdpi.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          cp ci-assets/ic_launcher_background_mdpi.png app/src/main/res/mipmap-mdpi/ic_launcher_background.png
+          cp ci-assets/ic_launcher_background_hdpi.png app/src/main/res/mipmap-hdpi/ic_launcher_background.png
+          cp ci-assets/ic_launcher_background_xhdpi.png app/src/main/res/mipmap-xhdpi/ic_launcher_background.png
+          cp ci-assets/ic_launcher_background_xxhdpi.png app/src/main/res/mipmap-xxhdpi/ic_launcher_background.png
+          cp ci-assets/ic_launcher_background_xxxhdpi.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_background.png
+
+          cp ci-assets/ic_launcher_foreground_mdpi.png app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
+          cp ci-assets/ic_launcher_foreground_hdpi.png app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+          cp ci-assets/ic_launcher_foreground_xhdpi.png app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
+          cp ci-assets/ic_launcher_foreground_xxhdpi.png app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
+          cp ci-assets/ic_launcher_foreground_xxxhdpi.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+
+          cp ci-assets/ic_launcher_monochrome_mdpi.png app/src/main/res/mipmap-mdpi/ic_launcher_monochrome.png
+          cp ci-assets/ic_launcher_monochrome_hdpi.png app/src/main/res/mipmap-hdpi/ic_launcher_monochrome.png
+          cp ci-assets/ic_launcher_monochrome_xhdpi.png app/src/main/res/mipmap-xhdpi/ic_launcher_monochrome.png
+          cp ci-assets/ic_launcher_monochrome_xxhdpi.png app/src/main/res/mipmap-xxhdpi/ic_launcher_monochrome.png
+          cp ci-assets/ic_launcher_monochrome_xxxhdpi.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_monochrome.png
+
+          cp ci-assets/rikkahub.svg app/src/main/assets/icons/rikkahub.svg
+
+          echo "✅ 图标已还原为旧版本"
+
       - name: 解码密钥到模块目录
         run: |
           # 直接在项目根目录用 echo 重定向到 app/ 下
@@ -123,16 +154,21 @@ jobs:
           # 生成 Release 描述
           cat > release_notes.md << EOF
           📱 RikkaHub 上游项目 https://github.com/rikkahub/rikkahub
-     
+
           🔀 上游项目今日 Commit
           $COMMIT_LIST
-          
+
+          ⚙️ CI 自定义修改
+          - 🔄 修改了版本号：\`${VERSION_NAME}\` → \`${NEW_VERSION_NAME}\`
+          - 🎨 修改成了旧版的图标文件
+          - 🔕 请手动关闭更新检查：设置 → 显示 → 关闭"实时更新通知"
+
           ℹ️ 版本信息
-          - 🏷️ 版本号：**${VERSION_NAME}**
+          - 🏷️ 版本号：**${NEW_VERSION_NAME}**
           - ⏰ 构建时间：$BUILD_TIME
           - ✅ 提交 SHA：$SHORT_SHA
           - 🔨 分支：$BRANCH_NAME
-          
+
           EOF
 
       - name: 发布到 GitHub Release
