@@ -36,7 +36,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalScrollCaptureInProgress
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -79,6 +79,8 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MousePointer2
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.X
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,6 +99,7 @@ import me.rerere.rikkahub.ui.components.ui.RabbitLoadingIndicator
 import me.rerere.rikkahub.ui.components.ui.Tooltip
 import me.rerere.rikkahub.ui.hooks.ImeLazyListAutoScroller
 import me.rerere.rikkahub.utils.plus
+import kotlin.math.roundToInt
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatList"
@@ -111,6 +114,7 @@ fun ChatList(
     loading: Boolean,
     previewMode: Boolean,
     settings: Settings,
+    hazeState: HazeState,
     errors: List<ChatError> = emptyList(),
     onDismissError: (Uuid) -> Unit = {},
     onClearAllErrors: () -> Unit = {},
@@ -138,6 +142,7 @@ fun ChatList(
                 innerPadding = innerPadding,
                 conversation = conversation,
                 settings = settings,
+                hazeState = hazeState,
                 onJumpToMessage = onJumpToMessage,
                 animatedVisibilityScope = this@AnimatedContent,
             )
@@ -148,6 +153,7 @@ fun ChatList(
                 state = state,
                 loading = loading,
                 settings = settings,
+                hazeState = hazeState,
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
@@ -174,6 +180,7 @@ private fun ChatListNormal(
     state: LazyListState,
     loading: Boolean,
     settings: Settings,
+    hazeState: HazeState,
     errors: List<ChatError>,
     onDismissError: (Uuid) -> Unit,
     onClearAllErrors: () -> Unit,
@@ -193,13 +200,15 @@ private fun ChatListNormal(
     val loadingState by rememberUpdatedState(loading)
     var isRecentScroll by remember { mutableStateOf(false) }
     val conversationUpdated by rememberUpdatedState(conversation)
+    val density = LocalDensity.current
 
     fun List<LazyListItemInfo>.isAtBottom(): Boolean {
         val lastItem = lastOrNull() ?: return false
-        if (lastItem.key == LoadingIndicatorKey || lastItem.key == ScrollBottomKey) {
-            return true
-        }
-        return lastItem.key == conversation.messageNodes.lastOrNull()?.id && (lastItem.offset + lastItem.size <= state.layoutInfo.viewportEndOffset + lastItem.size * 0.15 + 32)
+        val inputBarHeight = with(density) { innerPadding.calculateBottomPadding().toPx() }
+        val lastPos = lastItem.offset + lastItem.size
+        val inputPos = (state.layoutInfo.viewportEndOffset - inputBarHeight.roundToInt())
+        // println("lastPos = $lastPos, inputPos = $inputPos  | ${lastPos <= inputPos - 8}")
+        return lastPos <= inputPos - 8
     }
 
     // 聊天选择
@@ -253,12 +262,13 @@ private fun ChatListNormal(
 
         LazyColumn(
             state = state,
-            contentPadding = PaddingValues(16.dp) + PaddingValues(bottom = 32.dp),
+            contentPadding = PaddingValues(16.dp) + PaddingValues(bottom = 32.dp + innerPadding.calculateBottomPadding()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .hazeSource(state = hazeState)
+                .padding(top = innerPadding.calculateTopPadding()),
         ) {
             itemsIndexed(
                 items = conversation.messageNodes,
@@ -312,22 +322,6 @@ private fun ChatListNormal(
                             onToolApproval = onToolApproval,
                             lastMessage = index == conversation.messageNodes.lastIndex,
                         )
-                    }
-                    if (index == conversation.truncateIndex - 1) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier
-                                .padding(vertical = 8.dp)
-                                .fillMaxWidth()
-                        ) {
-                            HorizontalDivider(modifier = Modifier.weight(1f))
-                            Text(
-                                text = stringResource(R.string.chat_page_clear_context),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            HorizontalDivider(modifier = Modifier.weight(1f))
-                        }
                     }
                 }
             }
@@ -538,6 +532,7 @@ private fun ChatListPreview(
     innerPadding: PaddingValues,
     conversation: Conversation,
     settings: Settings,
+    hazeState: HazeState,
     animatedVisibilityScope: AnimatedVisibilityScope,
     onJumpToMessage: (Int) -> Unit
 ) {
@@ -555,7 +550,7 @@ private fun ChatListPreview(
 
     Column(
         modifier = Modifier
-            .padding(innerPadding)
+            .padding(top = innerPadding.calculateTopPadding())
             .fillMaxSize(),
     ) {
         // 搜索框
@@ -591,7 +586,7 @@ private fun ChatListPreview(
 
         // 消息预览
         LazyColumn(
-            contentPadding = PaddingValues(16.dp) + PaddingValues(bottom = 32.dp),
+            contentPadding = PaddingValues(16.dp) + PaddingValues(bottom = 32.dp + innerPadding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()

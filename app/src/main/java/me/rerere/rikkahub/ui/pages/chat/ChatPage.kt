@@ -49,6 +49,7 @@ import com.composables.icons.lucide.Option
 import com.composables.icons.lucide.Sparkles
 import com.composables.icons.lucide.X
 import com.dokar.sonner.ToastType
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import me.rerere.ai.provider.Model
@@ -251,6 +252,7 @@ private fun ChatPageContent(
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
     var previewMode by rememberSaveable { mutableStateOf(false) }
+    val hazeState = rememberHazeState()
 
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
 
@@ -285,6 +287,7 @@ private fun ChatPageContent(
                     settings = setting,
                     conversation = conversation,
                     mcpManager = vm.mcpManager,
+                    hazeState = hazeState,
                     onCancelClick = {
                         loadingJob?.cancel()
                     },
@@ -347,9 +350,6 @@ private fun ChatPageContent(
                             )
                         )
                     },
-                    onClearContext = {
-                        vm.handleMessageTruncate()
-                    },
                     onCompressContext = { additionalPrompt, targetTokens, keepRecentMessages ->
                         vm.handleCompressContext(additionalPrompt, targetTokens, keepRecentMessages)
                     },
@@ -364,6 +364,7 @@ private fun ChatPageContent(
                 loading = loadingJob != null,
                 previewMode = previewMode,
                 settings = setting,
+                hazeState = hazeState,
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
